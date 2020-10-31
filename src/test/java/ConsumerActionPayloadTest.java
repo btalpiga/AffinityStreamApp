@@ -1,5 +1,5 @@
 import com.google.gson.Gson;
-import com.nyble.topics.consumerActions.ConsumerActionsPayload;
+import com.nyble.topics.consumerActions.ConsumerActionsValue;
 import junit.framework.TestCase;
 
 public class ConsumerActionPayloadTest extends TestCase {
@@ -11,17 +11,17 @@ public class ConsumerActionPayloadTest extends TestCase {
                 "\"spendVal\" : null}";
         Gson gson = new Gson();
 
-        ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsPayload.class);
+        ConsumerActionsValue.ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsValue.ConsumerActionsPayload.class);
         assertNull(cap.getValue().getNewValueAsBool());
 
-        assertEquals(new Integer(10), cap.getValue().getSku_quantity());
+        assertEquals("10", cap.getValue().sku_quantity);
     }
 
     public void test_jsonConvertorNull(){
         String json = null;
         Gson gson = new Gson();
 
-        ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsPayload.class);
+        ConsumerActionsValue.ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsValue.ConsumerActionsPayload.class);
         assertNull(cap);
     }
 
@@ -29,8 +29,8 @@ public class ConsumerActionPayloadTest extends TestCase {
         String json = "{}";
         Gson gson = new Gson();
 
-        ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsPayload.class);
+        ConsumerActionsValue.ConsumerActionsPayload cap = gson.fromJson(json, ConsumerActionsValue.ConsumerActionsPayload.class);
         assertNull(cap.getValue());
-        assertNull(cap.getSubcampaignId());
+        assertNull(cap.subcampaignId);
     }
 }
