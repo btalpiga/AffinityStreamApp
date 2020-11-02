@@ -97,7 +97,10 @@
                     </execution>
                 </executions>
             </plugin>
+
         </plugins>
+
+        <finalName>AffinityStreamApp-${version}</finalName>
     </build>
 
 </project>
