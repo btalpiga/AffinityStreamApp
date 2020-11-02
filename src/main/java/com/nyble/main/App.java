@@ -27,6 +27,8 @@ import org.apache.kafka.streams.*;
 import org.apache.kafka.streams.kstream.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -41,6 +43,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+@SpringBootApplication(scanBasePackages = {"com.nyble.rest"})
 public class App {
 
     final static String KAFKA_CLUSTER_BOOTSTRAP_SERVERS = "10.100.1.17:9093";
@@ -155,9 +158,8 @@ public class App {
         Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
     }
 
-
     public static void main(String[] args) throws ExecutionException, InterruptedException {
-
+        SpringApplication.run(App.class, args);
         final String sourceTopic = "affinity-actions";
         final String subcampaignesTopic = "subcampaignes";
         final String intermediateTopic = "intermediate-affinity-scores";
