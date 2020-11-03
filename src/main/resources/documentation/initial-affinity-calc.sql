@@ -9,6 +9,7 @@ create table consumers_score_start as
 select system_id, consumer_id, brand_id, sum(score) as score from (
 	select ca.system_id, ca.consumer_id,
 	case when s.brand_id in (117, 125, 127, 138) then s.brand_id
+	     when s.brand_id = 13 and ca.system_id = 1 then 138
 		 when substring(ca.payload_json->>'sku_bought',1,2) = 'WI' then 127
 		 when substring(ca.payload_json->>'sku_bought',1,2) = 'SB' or substring(ca.payload_json->>'sku_bought',1,2) = 'SO' then 125
 		 when substring(ca.payload_json->>'sku_bought',1,2) = 'LG' then 138
@@ -39,6 +40,7 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 	where acts.is_complex = false and ca.external_system_date > now()-'2 year'::interval and s.brand_id in (117, 125, 127, 138, 486)
 		and ( (ca.id <=:lastRmcActionId and ca.system_id = 1) or (ca.id <=:lastRrpActionId and ca.system_id = 2))
 ) as foo
+where brand_id > 0
 group by system_id, consumer_id, brand_id;
 
 
