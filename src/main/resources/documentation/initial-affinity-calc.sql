@@ -3,7 +3,7 @@
 
 drop table if exists consumers_score_start;
 
-UPDATE config_parameters set value = substring(date_trunc('hour', now())::text, 1, 16) where key = 'AFFINITY_DECREMENT_FROM';
+UPDATE config_parameters set value = substring(date_trunc('hour', now()-'2 year'::interval)::text, 1, 16) where key = 'AFFINITY_DECREMENT_FROM';
 
 create table consumers_score_start as
 select system_id, consumer_id, brand_id, sum(score) as score from (
