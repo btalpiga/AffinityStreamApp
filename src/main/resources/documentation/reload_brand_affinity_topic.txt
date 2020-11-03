@@ -1,5 +1,7 @@
 -- THIS PORTION IS ONLY MANDATORY ON RECALCULATIONS --
 
+--check that actions rmc/rrp kafka connectors are paused and affinity consumers have lag = 0
+
 cd ~/kits/confluent-5.5.1/
 
 --get the latest id from actions in database:
