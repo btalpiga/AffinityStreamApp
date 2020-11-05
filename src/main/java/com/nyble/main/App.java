@@ -188,7 +188,9 @@ public class App {
                     SubcampaignesValue subcampaignesValue = gson.fromJson(subcampaign, SubcampaignesValue.class);
                     int brandId = subcampaignesValue.getBrandId();
                     //allowed brands are //117 = CAMEL   125 = SOBRANIE   127 = WINSTON   138 = LOGIC   486 = Multiref.brand
-                    if(brandId == 486){
+                    if(brandId == 13 && consumerActionsValue.getSystemId().equals("1")){
+                        brandId = 138;
+                    }else if(brandId == 486){
                         if(consumerActionPayload.getValue() == null){
                             brandId = -1;
                         }else{
@@ -215,7 +217,8 @@ public class App {
                 .filter((consumerStr, bavStr) -> {
                     logger.debug("Filter out actions with score == 0 and brand not allowed");
                     BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                    return bav != null && (bav.getDeltaScore() != 0) && AffinityActionsDict.allowedBrands.contains(bav.getBrandId());
+                    return bav != null && (bav.getDeltaScore() != 0)
+                            && AffinityActionsDict.allowedBrands.contains(bav.getBrandId());
                 });
 
         actionsEventsEnrichedWithSubcampaignes
@@ -274,7 +277,7 @@ public class App {
                 "from consumer_actions ca \n" +
                 "join recoded_subcampaignes r on (ca.payload_json ->>'subcampaignId')::int = r.id and ca.system_id = r.system_id\n" +
                 "where ca.external_system_date > '"+startDate+"' and ca.external_system_date <= '"+endDate+"' and \n" +
-                "r.brand_id in ("+AffinityActionsDict.allowedBrands.stream().map(bId->bId+"").collect(Collectors.joining(","))+")";
+                "r.brand_id in (13,"+AffinityActionsDict.allowedBrands.stream().map(bId->bId+"").collect(Collectors.joining(","))+")";
         try(Connection conn = DBUtil.getInstance().getConnection("datawarehouse");
             Statement st = conn.createStatement();
             ResultSet rs = st.executeQuery(query)){
@@ -296,7 +299,10 @@ public class App {
                 cap.setValue(json);
                 cap.setRaw(payload);
                 //allowed brands are //117 = CAMEL   125 = SOBRANIE   127 = WINSTON   138 = LOGIC   486 = Multiref.brand
-                if(brandId == 486){
+                if(brandId == 13 && systemId == 1){
+                    //this is Logic
+                    brandId = 138;
+                }else if(brandId == 486){
                     if(json == null){
                         //brandId = -1;
                         continue;
