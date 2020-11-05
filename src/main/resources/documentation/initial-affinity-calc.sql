@@ -1,9 +1,14 @@
 -- this assumes that you already have a max_rmc_action_id and max_rrp_action_id chosen
 -- they should be equal to lastRmcActionId and lastRrpActionId from the stream application
 
+begin;
+
 drop table if exists consumers_score_start;
 
-UPDATE config_parameters set value = substring(date_trunc('hour', now()-'2 year'::interval)::text, 1, 16) where key = 'AFFINITY_DECREMENT_FROM';
+UPDATE config_parameters set value = date_trunc('milliseconds', now()-'2 year'::interval)::text
+where key = 'AFFINITY_DECREMENT_FROM';
+--round((extract(epoch from now()-'2 year'::interval)*1000))::text
+--substring(date_trunc('hour', now()-'2 year'::interval)::text, 1, 16) where key = 'AFFINITY_DECREMENT_FROM';
 
 create table consumers_score_start as
 select system_id, consumer_id, brand_id, sum(score) as score from (
@@ -37,7 +42,7 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 	from consumer_actions ca
 	join affinity.action_scores acts using (action_id, system_id)
 	join recoded_subcampaignes s on (ca.payload_json->>'subcampaignId')::int = s.id and ca.system_id = s.system_id
-	where acts.is_complex = false and ca.external_system_date > now()-'2 year'::interval and s.brand_id in (117, 125, 127, 138, 486)
+	where acts.is_complex = false and ca.external_system_date > now()-'2 year'::interval and s.brand_id in (13, 117, 125, 127, 138, 486)
 		and ( (ca.id <=:lastRmcActionId and ca.system_id = 1) or (ca.id <=:lastRrpActionId and ca.system_id = 2))
 ) as foo
 where brand_id > 0
@@ -51,3 +56,5 @@ group by system_id, consumer_id, brand_id;
 --where cs.system_id is null and cs.id_consumer is null;
 
 alter table consumers_score_start add column id serial;
+
+commit;
