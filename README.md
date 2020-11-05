@@ -25,9 +25,9 @@ changeLog: PUT /logger `{"logName": "com.nyble", "logLevel": "warn"}`
 ["jdbc_source_consumer_affinity_score_start",{"query":"query"}];{"incrementing":0}`
 
 #### empty affinity_actions(input topic) a
-`bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity_actions --add-config retention.ms=10`  
+`bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --add-config retention.ms=10`  
 --wait  
-`bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity_actions --delete-config retention.ms`
+`bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --delete-config retention.ms`
 
 #### empty intermediate topic intermediate-affinity-scores:
 `bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name intermediate-affinity-scores --add-config retention.ms=10`  
