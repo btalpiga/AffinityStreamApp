@@ -5,10 +5,7 @@ begin;
 
 drop table if exists consumers_score_start;
 
-UPDATE config_parameters set value = date_trunc('milliseconds', now()-'2 year'::interval)::text
-where key = 'AFFINITY_DECREMENT_FROM';
---round((extract(epoch from now()-'2 year'::interval)*1000))::text
---substring(date_trunc('hour', now()-'2 year'::interval)::text, 1, 16) where key = 'AFFINITY_DECREMENT_FROM';
+UPDATE config_parameters set value = date_trunc('milliseconds', now()-'2 year'::interval)::text where key = 'AFFINITY_DECREMENT_FROM';
 
 create table consumers_score_start as
 select system_id, consumer_id, brand_id, sum(score) as score from (
@@ -48,13 +45,15 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 where brand_id > 0
 group by system_id, consumer_id, brand_id;
 
+update consumers set payload = payload-'affinity_117'-'affinity_125'-'affinity_127'-'affinity_138';
 
---insert into consumers_score_start (system_id, consumer_id, brand_id, score)
---select cb.id, cb.brand, 0
---from (select system_id, consumer_id, brand from consumers cross join (select 117 brand union select 125 brand union select 127 brand union select 138 brand) brands) cb
---left join consumers_score_start cs on cb.system_id = cs.system_id and cb.consumer_id = cs.id_consumer and cb.brand = cs.brand_id
---where cs.system_id is null and cs.id_consumer is null;
-
-alter table consumers_score_start add column id serial;
+insert into consumers (system_id, consumer_id, payload, updated_at)
+select system_id, consumer_id,
+json_build_object('affinity_'||brand_id,
+    json_build_object('lut', round(extract(epoch from now()) * 1000)::text, 'value', score::text)
+), now()
+from consumers_score_start
+on conflict on constraint consumers_pk do update
+set payload = consumers.payload || excluded.payload, updated_at = now();
 
 commit;

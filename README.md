@@ -19,12 +19,7 @@ changeLog: PUT /logger `{"logName": "com.nyble", "logLevel": "warn"}`
 
 #### check that stream app AffinityStreamApp.jar is not running
 
-#### check that kafka connector jdbc_source_consumer_affinity_score_start does not exist OR pause and delete it  
-#### reset kafka connector jdbc_source_consumer_affinity_score_start offset
-`./bin/kafka-console-producer --bootstrap-server 10.100.1.17:9093 --topic connect-consumer-action-offsets --property "parse.key=true" --property "key.separator=;"
-["jdbc_source_consumer_affinity_score_start",{"query":"query"}];{"incrementing":0}`
-
-#### empty affinity_actions(input topic) a
+#### empty affinity_actions(source topic) a
 `bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --add-config retention.ms=10`  
 --wait  
 `bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --delete-config retention.ms`
@@ -41,11 +36,4 @@ changeLog: PUT /logger `{"logName": "com.nyble", "logLevel": "warn"}`
 #### delete internal stream app topics
 `./bin/kafka-topics --bootstrap-server 10.100.1.17:9093  --delete --topic <everything starting with affinity-stream-....>`
 
-#### update consumers table and set all affinity_brands to 0
-`update consumers set payload = payload-'affinity_117'-'affinity_125'-'affinity_127'-'affinity_138'`
-
 #### start streams app
-
---create kafka connector jdbc_source_consumer_affinity_score_start and wait until full table is loaded  
---pause and delete kafka connector jdbc_source_consumer_affinity_score_start  
---delete kafka connector jdbc_source_consumer_affinity_score_start  

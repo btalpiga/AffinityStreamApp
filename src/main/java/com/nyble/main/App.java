@@ -107,7 +107,7 @@ public class App {
             KafkaConsumer<String, String> kConsumer = new KafkaConsumer<>(consumerProps);
             kConsumer.subscribe(Arrays.asList(Names.CONSUMER_ACTIONS_RMC_TOPIC, Names.CONSUMER_ACTIONS_RRP_TOPIC));
             while(true){
-                ConsumerRecords<String, String> records = kConsumer.poll(1000*10);
+                ConsumerRecords<String, String> records = kConsumer.poll(Duration.ofSeconds(10));
                 records.forEach(record->{
                     String provenienceTopic = record.topic();
                     int lastAction;
@@ -121,10 +121,7 @@ public class App {
 
                     //filter actions
                     ConsumerActionsValue cav = (ConsumerActionsValue) TopicObjectsFactory.fromJson(record.value(), ConsumerActionsValue.class);
-                    if(Integer.parseInt(cav.getId()) > lastAction &&
-                            new Date(Long.parseLong(cav.getExternalSystemDate()))
-                                    .after(new Date(System.currentTimeMillis() - 2L * 365L *24L*60L*60L*1000L))
-                    ){
+                    if(Integer.parseInt(cav.getId()) > lastAction && AffinityActionsDict.filter(cav)){
                         ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = cav.getPayloadJson();
                         if(consumerActionPayload!= null && consumerActionPayload.subcampaignId != null){
                             int subcampaignId = Integer.parseInt(consumerActionPayload.subcampaignId);
@@ -172,7 +169,6 @@ public class App {
         final StreamsBuilder builder = new StreamsBuilder();
         final KStream<String, String> affinityEvents = builder
                 .stream(sourceTopic,Consumed.with(Serdes.String(), Serdes.String())
-//                        .withTimestampExtractor(new ActionTimestampExtractor())
         );
         final KTable<String, String> subcampaignesTable = builder.table(subcampaignesTopic,
                 Consumed.with(Serdes.String(), Serdes.String()));

@@ -2,6 +2,7 @@ package com.nyble.main;
 
 import com.google.gson.Gson;
 import com.nyble.topics.consumerActions.ConsumerActionsValue;
+import com.nyble.types.ConsumerActionDescriptor;
 import com.nyble.util.DBUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -336,6 +337,17 @@ public class AffinityActionsDict {
         }else{
             return "";
         }
+    }
+
+    public static boolean filter(ConsumerActionsValue cav){
+        String systemId = cav.getSystemId()+"";
+        String actionId = cav.getActionId()+"";
+        final long twoYearsDurationMillis = 365L*24*60*60*1000;
+        Date actionDate = new Date(Long.parseLong(cav.getExternalSystemDate()));
+        Date now = new Date();
+        boolean allowedActionDate = actionDate.after(new Date(System.currentTimeMillis() - twoYearsDurationMillis)) &&
+                (actionDate.before(now) || actionDate.equals(now));
+        return affinityActions.containsKey(systemId+"#"+actionId) && allowedActionDate;
     }
 
 

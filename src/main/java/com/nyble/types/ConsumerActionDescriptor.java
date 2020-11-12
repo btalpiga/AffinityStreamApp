@@ -1,4 +1,4 @@
-package com.nyble.main;
+package com.nyble.types;
 
 import com.nyble.topics.consumerActions.ConsumerActionsValue;
 
