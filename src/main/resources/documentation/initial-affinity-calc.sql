@@ -12,10 +12,10 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 	select ca.system_id, ca.consumer_id,
 	case when s.brand_id in (117, 125, 127, 138) then s.brand_id
 	     when s.brand_id = 13 and ca.system_id = 1 then 138
-		 when substring(ca.payload_json->>'sku_bought',1,2) = 'WI' then 127
-		 when substring(ca.payload_json->>'sku_bought',1,2) = 'SB' or substring(ca.payload_json->>'sku_bought',1,2) = 'SO' then 125
-		 when substring(ca.payload_json->>'sku_bought',1,2) = 'LG' then 138
-		 when substring(ca.payload_json->>'sku_bought',1,2) = 'CA' then 117
+		 when substring(ca.payload_json->'value'->>'sku_bought',1,2) = 'WI' then 127
+         when substring(ca.payload_json->'value'->>'sku_bought',1,2) = 'SB' or substring(ca.payload_json->'value'->>'sku_bought',1,2) = 'SO' then 125
+         when substring(ca.payload_json->'value'->>'sku_bought',1,2) = 'LG' then 138
+         when substring(ca.payload_json->'value'->>'sku_bought',1,2) = 'CA' then 117
 		 else -1
 	end as brand_id,
 	case when acts.is_complex = false then acts.score
@@ -39,7 +39,7 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 	from consumer_actions ca
 	join affinity.action_scores acts using (action_id, system_id)
 	join recoded_subcampaignes s on (ca.payload_json->>'subcampaignId')::int = s.id and ca.system_id = s.system_id
-	where acts.is_complex = false and ca.external_system_date > now()-'2 year'::interval and s.brand_id in (13, 117, 125, 127, 138, 486)
+	where ca.external_system_date > now()-'2 year'::interval and s.brand_id in (13, 117, 125, 127, 138, 486)
 		and ( (ca.id <=:lastRmcActionId and ca.system_id = 1) or (ca.id <=:lastRrpActionId and ca.system_id = 2))
 ) as foo
 where brand_id > 0
