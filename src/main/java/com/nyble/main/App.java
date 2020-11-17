@@ -1,6 +1,7 @@
 package com.nyble.main;
 
 import com.google.gson.Gson;
+import com.nyble.exceptions.RuntimeSqlException;
 import com.nyble.managers.ProducerManager;
 import com.nyble.streams.types.BrandAffinityValue;
 import com.nyble.streams.types.SubcampaignesKey;
@@ -76,8 +77,22 @@ public class App {
 
     public static void initSourceTopic(List<String> topics) throws ExecutionException, InterruptedException {
         //this values should be updated on redeployment, if actions are reloaded
-        final int lastRmcActionId = 670349815;
-        final int lastRrpActionId = 2309077;
+        int lastRmcActionId;
+        int lastRrpActionId;
+        final String configName = "AFFINITY_LAST_ACTION_ID_%";
+        final String lastActIdsQ = String.format("select vals[1]::int as rmc, vals[2]::int as rrp from\n" +
+                "(\tselect array_agg(value order by key) as vals \n" +
+                "\tfrom config_parameters cp \n" +
+                "\twhere key like '%s'\n" +
+                ") foo", configName);
+        try(Connection conn = DBUtil.getInstance().getConnection("datawarehouse");
+            Statement st = conn.createStatement();
+            ResultSet rs = st.executeQuery(lastActIdsQ)){
+            lastRmcActionId = rs.getInt("rmc");
+            lastRrpActionId = rs.getInt("rrp");
+        } catch (SQLException e) {
+            throw new RuntimeSqlException(e.getMessage(), e);
+        }
         //
         final String consumerGroupId = "affinity-source-creator";
         final Gson gson = new Gson();
