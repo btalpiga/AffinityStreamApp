@@ -175,104 +175,110 @@ public class App {
         Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
     }
 
-    public static void main(String[] args) throws ExecutionException, InterruptedException {
-        SpringApplication.run(App.class, args);
-        final String sourceTopic = "affinity-actions";
-        final String subcampaignesTopic = "subcampaignes";
-        final String intermediateTopic = "intermediate-affinity-scores";
+    public static void main(String[] args){
 
-        initSourceTopic(Arrays.asList(sourceTopic, intermediateTopic));
-        scheduleBatchUpdate(intermediateTopic);
+        try{
+            SpringApplication.run(App.class, args);
+            final String sourceTopic = "affinity-actions";
+            final String subcampaignesTopic = "subcampaignes";
+            final String intermediateTopic = "intermediate-affinity-scores";
+
+            initSourceTopic(Arrays.asList(sourceTopic, intermediateTopic));
+            scheduleBatchUpdate(intermediateTopic);
 
 
-        final Gson gson = new Gson();
-        final StreamsBuilder builder = new StreamsBuilder();
-        final KStream<String, String> affinityEvents = builder
-                .stream(sourceTopic,Consumed.with(Serdes.String(), Serdes.String())
-        );
-        final KTable<String, String> subcampaignesTable = builder.table(subcampaignesTopic,
-                Consumed.with(Serdes.String(), Serdes.String()));
-
-        final KStream<String, String> actionsEventsEnrichedWithSubcampaignes = affinityEvents
-                .join(subcampaignesTable,(action, subcampaign)->{
-                    logger.debug("Join action with subcampaign");
-                    ConsumerActionsValue consumerActionsValue = (ConsumerActionsValue) TopicObjectsFactory
-                            .fromJson(action, ConsumerActionsValue.class);
-                    ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = consumerActionsValue.getPayloadJson();
-                    int actionScore = AffinityActionsDict.getScore(consumerActionsValue.getSystemId()+"",
-                            consumerActionsValue.getActionId()+"", consumerActionPayload);
-                    SubcampaignesValue subcampaignesValue = gson.fromJson(subcampaign, SubcampaignesValue.class);
-                    int brandId = subcampaignesValue.getBrandId();
-                    //allowed brands are //117 = CAMEL   125 = SOBRANIE   127 = WINSTON   138 = LOGIC   486 = Multiref.brand
-                    if(brandId == 13 && consumerActionsValue.getSystemId().equals("1")){
-                        brandId = 138;
-                    }else if(brandId == 486){
-                        if(consumerActionPayload.getValue() == null){
-                            brandId = -1;
-                        }else{
-                            String skuBought = consumerActionPayload.getValue().sku_bought!= null ?
-                                    consumerActionPayload.getValue().sku_bought : "";
-                            if(skuBought.toUpperCase().startsWith("SB") || skuBought.toUpperCase().startsWith("SO")){brandId = 125;}
-                            else if(skuBought.toUpperCase().startsWith("WI")){brandId = 127;}
-                            else if(skuBought.toUpperCase().startsWith("CA")){brandId = 117;}
-                            else if(skuBought.toUpperCase().startsWith("LG")){brandId = 138;}
-                            else {brandId = -1;}
-                        }
-                    }
-                    BrandAffinityValue bav = new BrandAffinityValue(Integer.parseInt(consumerActionsValue.getSystemId()),
-                            Integer.parseInt(consumerActionsValue.getConsumerId()), brandId, actionScore);
-                    return gson.toJson(bav);
-                },Joined.with(Serdes.String(), Serdes.String(), Serdes.String()))
-                .map((subcampaignStr, bavStr)->{
-                    logger.debug("Remap key from subcampaign to consumer");
-                    SubcampaignesKey sk = gson.fromJson(subcampaignStr, SubcampaignesKey.class);
-                    BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                    ConsumerActionsKey cak = new ConsumerActionsKey(sk.getSystemId(), bav.getConsumerId());
-                    return KeyValue.pair(cak.toJson(), bavStr);
-                })
-                .filter((consumerStr, bavStr) -> {
-                    logger.debug("Filter out actions with score == 0 and brand not allowed");
-                    BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                    return bav != null && (bav.getDeltaScore() != 0)
-                            && AffinityActionsDict.allowedBrands.contains(bav.getBrandId());
-                });
-
-        actionsEventsEnrichedWithSubcampaignes
-                .map((consumerActionsKeyStr, bavStr) ->{
-                    logger.debug("Remap key including brand from subcampaign");
-                    ConsumerActionsKey cak = (ConsumerActionsKey) TopicObjectsFactory
-                            .fromJson(consumerActionsKeyStr, ConsumerActionsKey.class);
-                    BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                    return KeyValue.pair(
-                            gson.toJson(new SystemConsumerBrand(cak.getSystemId(),cak.getConsumerId(),bav.getBrandId())),bavStr
+            final Gson gson = new Gson();
+            final StreamsBuilder builder = new StreamsBuilder();
+            final KStream<String, String> affinityEvents = builder
+                    .stream(sourceTopic,Consumed.with(Serdes.String(), Serdes.String())
                     );
-                })
-                .through(intermediateTopic, Produced.with(Serdes.String(), Serdes.String()))
-                .groupByKey()
-                .reduce((bavStr1, bavStr2)->{
-                    BrandAffinityValue bav1 = gson.fromJson(bavStr1, BrandAffinityValue.class);
-                    BrandAffinityValue bav2 = gson.fromJson(bavStr2, BrandAffinityValue.class);
-                    bav2.add(bav1.getDeltaScore());
-                    return gson.toJson(bav2);
-                })
-                .toStream()
-                .map((scbStr, bavStr)->{
-                    String currentTime = new Date().getTime()+"";
-                    BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                    ConsumerAttributesKey cak = new ConsumerAttributesKey(bav.getSystemId(), bav.getConsumerId());
-                    ConsumerAttributesValue cav = new ConsumerAttributesValue(bav.getSystemId()+"", bav.getConsumerId()+"",
-                            "affinity_"+bav.getBrandId(), bav.getDeltaScore()+"", currentTime, currentTime);
-                    return KeyValue.pair(cak.toJson(), cav.toJson());
-                })
-                .to(Names.CONSUMER_ATTRIBUTES_TOPIC, Produced.with(Serdes.String(), Serdes.String()));
+            final KTable<String, String> subcampaignesTable = builder.table(subcampaignesTopic,
+                    Consumed.with(Serdes.String(), Serdes.String()));
 
-        Topology topology = builder.build();
-        logger.debug(topology.describe().toString());
-        KafkaStreams streams = new KafkaStreams(topology, streamsConfig);
-        streams.cleanUp();
-        streams.start();
-        Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
+            final KStream<String, String> actionsEventsEnrichedWithSubcampaignes = affinityEvents
+                    .join(subcampaignesTable,(action, subcampaign)->{
+                        logger.debug("Join action with subcampaign");
+                        ConsumerActionsValue consumerActionsValue = (ConsumerActionsValue) TopicObjectsFactory
+                                .fromJson(action, ConsumerActionsValue.class);
+                        ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = consumerActionsValue.getPayloadJson();
+                        int actionScore = AffinityActionsDict.getScore(consumerActionsValue.getSystemId()+"",
+                                consumerActionsValue.getActionId()+"", consumerActionPayload);
+                        SubcampaignesValue subcampaignesValue = gson.fromJson(subcampaign, SubcampaignesValue.class);
+                        int brandId = subcampaignesValue.getBrandId();
+                        //allowed brands are //117 = CAMEL   125 = SOBRANIE   127 = WINSTON   138 = LOGIC   486 = Multiref.brand
+                        if(brandId == 13 && consumerActionsValue.getSystemId().equals("1")){
+                            brandId = 138;
+                        }else if(brandId == 486){
+                            if(consumerActionPayload.getValue() == null){
+                                brandId = -1;
+                            }else{
+                                String skuBought = consumerActionPayload.getValue().sku_bought!= null ?
+                                        consumerActionPayload.getValue().sku_bought : "";
+                                if(skuBought.toUpperCase().startsWith("SB") || skuBought.toUpperCase().startsWith("SO")){brandId = 125;}
+                                else if(skuBought.toUpperCase().startsWith("WI")){brandId = 127;}
+                                else if(skuBought.toUpperCase().startsWith("CA")){brandId = 117;}
+                                else if(skuBought.toUpperCase().startsWith("LG")){brandId = 138;}
+                                else {brandId = -1;}
+                            }
+                        }
+                        BrandAffinityValue bav = new BrandAffinityValue(Integer.parseInt(consumerActionsValue.getSystemId()),
+                                Integer.parseInt(consumerActionsValue.getConsumerId()), brandId, actionScore);
+                        return gson.toJson(bav);
+                    },Joined.with(Serdes.String(), Serdes.String(), Serdes.String()))
+                    .map((subcampaignStr, bavStr)->{
+                        logger.debug("Remap key from subcampaign to consumer");
+                        SubcampaignesKey sk = gson.fromJson(subcampaignStr, SubcampaignesKey.class);
+                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
+                        ConsumerActionsKey cak = new ConsumerActionsKey(sk.getSystemId(), bav.getConsumerId());
+                        return KeyValue.pair(cak.toJson(), bavStr);
+                    })
+                    .filter((consumerStr, bavStr) -> {
+                        logger.debug("Filter out actions with score == 0 and brand not allowed");
+                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
+                        return bav != null && (bav.getDeltaScore() != 0)
+                                && AffinityActionsDict.allowedBrands.contains(bav.getBrandId());
+                    });
 
+            actionsEventsEnrichedWithSubcampaignes
+                    .map((consumerActionsKeyStr, bavStr) ->{
+                        logger.debug("Remap key including brand from subcampaign");
+                        ConsumerActionsKey cak = (ConsumerActionsKey) TopicObjectsFactory
+                                .fromJson(consumerActionsKeyStr, ConsumerActionsKey.class);
+                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
+                        return KeyValue.pair(
+                                gson.toJson(new SystemConsumerBrand(cak.getSystemId(),cak.getConsumerId(),bav.getBrandId())),bavStr
+                        );
+                    })
+                    .through(intermediateTopic, Produced.with(Serdes.String(), Serdes.String()))
+                    .groupByKey()
+                    .reduce((bavStr1, bavStr2)->{
+                        BrandAffinityValue bav1 = gson.fromJson(bavStr1, BrandAffinityValue.class);
+                        BrandAffinityValue bav2 = gson.fromJson(bavStr2, BrandAffinityValue.class);
+                        bav2.add(bav1.getDeltaScore());
+                        return gson.toJson(bav2);
+                    })
+                    .toStream()
+                    .map((scbStr, bavStr)->{
+                        String currentTime = new Date().getTime()+"";
+                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
+                        ConsumerAttributesKey cak = new ConsumerAttributesKey(bav.getSystemId(), bav.getConsumerId());
+                        ConsumerAttributesValue cav = new ConsumerAttributesValue(bav.getSystemId()+"", bav.getConsumerId()+"",
+                                "affinity_"+bav.getBrandId(), bav.getDeltaScore()+"", currentTime, currentTime);
+                        return KeyValue.pair(cak.toJson(), cav.toJson());
+                    })
+                    .to(Names.CONSUMER_ATTRIBUTES_TOPIC, Produced.with(Serdes.String(), Serdes.String()));
+
+            Topology topology = builder.build();
+            logger.debug(topology.describe().toString());
+            KafkaStreams streams = new KafkaStreams(topology, streamsConfig);
+            streams.cleanUp();
+            streams.start();
+            Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
+        }catch(Exception e){
+            logger.error(e.getMessage(), e);
+            logger.error("EXITING");
+            System.exit(1);
+        }
     }
 
 
