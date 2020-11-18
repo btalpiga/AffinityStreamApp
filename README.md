@@ -11,43 +11,75 @@ changeLog: PUT /logger `{"logName": "com.nyble", "logLevel": "warn"}`
 #### check that stream app AffinityStreamApp.jar is not running
 
 #### get the latest id from actions in database:
-`update config_parameters  
- set value = q.id  
- from (select max(id) as id from consumer_actions where system_id = 1) q  
- where key = 'AFFINITY_LAST_ACTION_ID_RMC';--lastRmcActionId`  
-`create temp table tmp as select id from consumer_actions ca where system_id = 2;
- update config_parameters  
- set value = q.id  
- from (select max(id) as id from tmp) q  
- where key = 'AFFINITY_LAST_ACTION_ID_RRP';--lastRmcActionId  
- drop table tmp;`  
-`cd /home/crmsudo/jobs/kafkaClients/scripts && node utility.js --get-script name=affinity replace=:lastRmcActionId^TODO replace=:lastRrpActionId^TODO`
+```sql
+update config_parameters  
+set value = q.id  
+from (select max(id) as id from consumer_actions where system_id = 1) q  
+where key = 'AFFINITY_LAST_ACTION_ID_RMC';--lastRmcActionId
+create temp table tmp as select id from consumer_actions ca where system_id = 2;
+update config_parameters  
+set value = q.id  
+from (select max(id) as id from tmp) q  
+where key = 'AFFINITY_LAST_ACTION_ID_RRP';--lastRmcActionId  
+drop table tmp;
+```
+```shell script
+cd /home/crmsudo/jobs/kafkaClients/scripts && node utility.js --get-script \
+name=affinity replace=:lastRmcActionId^TODO replace=:lastRrpActionId^TODO
+```
 
 #### empty affinity_actions(source topic) a
-`~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --add-config retention.ms=10`  
+```shell script
+~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics \
+--entity-name affinity-actions --add-config retention.ms=10
+```
 --wait  
-`~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name affinity-actions --delete-config retention.ms`
+```shell script
+~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics \
+--entity-name affinity-actions --delete-config retention.ms
+```
+
 
 #### empty intermediate topic intermediate-affinity-scores:
-`~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name intermediate-affinity-scores --add-config retention.ms=10`  
+```shell script
+~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics \
+--entity-name intermediate-affinity-scores --add-config retention.ms=10
+```
 --wait  
-`~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics --entity-name intermediate-affinity-scores --delete-config retention.ms`
+```shell script
+~/kits/confluent-5.5.1/bin/kafka-configs --bootstrap-server 10.100.1.17:9093 --alter --entity-type topics \
+--entity-name intermediate-affinity-scores --delete-config retention.ms
+```
 
 #### use reset for affinity-stream stream app:
-`~/kits/confluent-5.5.1/bin/kafka-streams-application-reset --application-id affinity-stream --input-topics affinity-actions --bootstrap-servers 10.100.1.17:9093`  
-`~/kits/confluent-5.5.1/bin/kafka-streams-application-reset --application-id affinity-stream --input-topics affinity-actions,subcampaignes --intermediate-topics intermediate-affinity-scores --bootstrap-servers 10.100.1.17:9093`
+```shell script
+~/kits/confluent-5.5.1/bin/kafka-streams-application-reset --application-id affinity-stream \
+--input-topics affinity-actions --bootstrap-servers 10.100.1.17:9093
+~/kits/confluent-5.5.1/bin/kafka-streams-application-reset --application-id affinity-stream \
+--input-topics affinity-actions,subcampaignes --intermediate-topics intermediate-affinity-scores \
+--bootstrap-servers 10.100.1.17:9093
+```
 
 #### delete internal stream app topics
 `~/kits/confluent-5.5.1/bin/kafka-topics --bootstrap-server 10.100.1.17:9093  --delete --topic <everything starting with affinity-stream-....>`
 
 #### load initial state
-`PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse -f "/home/crmsudo/jobs/kafkaClients/scripts/initial-affinity-calc.sql"&`
-`PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse -c "\copy (\
-select replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id)::text, ' :', ':'),\
-replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id, 'deltaScore', score)::text, ' :', ':') \
-from consumers_score_start\
-) to '/tmp/affinity.csv' delimiter ';'" &`  
-`cd /home/crmsudo/jobs/kafkaClients/scripts/kafkaToolsJava`
-`./kafkaTools.sh producer --topic intermediate-affinity-scores --bootstrap-server 10.100.1.17:9093 --value-serializer String --key-serializer String --format key-value --key-value-delimiter ";" --file /tmp/affinity.csv`
+```shell script
+PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse \
+-f "/home/crmsudo/jobs/kafkaClients/scripts/initial-affinity-calc.sql"&
+```
+```shell script
+PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse \
+-c "\copy (select \n
+replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id)::text, ' :', ':'),\n
+replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id, 'deltaScore', score)::text, ' :', ':') \n
+from consumers_score_start) to '/tmp/affinity.csv' delimiter ';'" &
+```  
+```shell script
+cd /home/crmsudo/jobs/kafkaClients/scripts/kafkaToolsJava
+./kafkaTools.sh producer --topic intermediate-affinity-scores --bootstrap-server 10.100.1.17:9093 \
+--value-serializer String --key-serializer String --format key-value --key-value-delimiter ";" \
+--file /tmp/affinity.csv
+```
 
 #### start streams app
