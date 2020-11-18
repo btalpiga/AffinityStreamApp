@@ -71,8 +71,8 @@ PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse \
 ```shell script
 PGPASSWORD=postgres10@ nohup psql -U postgres -h localhost -d datawarehouse \
 -c "\\copy (select 
-replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id)::text, ' : ', ':'),
-replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id, 'deltaScore', score)::text, ' : ', ':')
+replace(replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id)::text, ' : ', ':'), ', ', ','),
+replace(replace(json_build_object('systemId', system_id, 'consumerId', consumer_id, 'brandId', brand_id, 'deltaScore', score)::text, ' : ', ':'), ', ', ',')
 from consumers_score_start) to '/tmp/affinity.csv' delimiter ';' " &
 ```  
 ```shell script
