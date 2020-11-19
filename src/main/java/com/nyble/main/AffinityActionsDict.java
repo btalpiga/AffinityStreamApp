@@ -91,7 +91,7 @@ public class AffinityActionsDict {
         affinityActions.put("1#3037", new ConsumerActionDescriptor(3037,"Research_Completed_x000D_",5,"1"));
         affinityActions.put("1#1763", new ConsumerActionDescriptor(1763,"SMS User",4,"1"));
         affinityActions.put("1#1832", new ConsumerActionDescriptor(1832,"Click_link Email",4,"1"));
-        affinityActions.put("1#3149", new ConsumerActionDescriptor(3149,"click_short_url_with_data",4,"1"));
+//        affinityActions.put("1#3149", new ConsumerActionDescriptor(3149,"click_short_url_with_data",4,"1"));
         affinityActions.put("1#3016", new ConsumerActionDescriptor(3016,"Validated as winner_w.o_CI_x000D_",3,"1"));
         affinityActions.put("1#3090", new ConsumerActionDescriptor(3090,"Premiu_Sobranie_Gold",3,"1"));
         affinityActions.put("1#3089", new ConsumerActionDescriptor(3089,"Premiu_Sobranie_Black",3,"1"));
