@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -38,10 +39,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.Date;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @SpringBootApplication(scanBasePackages = {"com.nyble.rest"})
@@ -124,40 +122,52 @@ public class App {
 
         String sourceTopic = topics.get(0);
         Thread poolActionsThread = new Thread(()->{
-            KafkaConsumer<String, String> kConsumer = new KafkaConsumer<>(consumerProps);
-            kConsumer.subscribe(Arrays.asList(Names.CONSUMER_ACTIONS_RMC_TOPIC, Names.CONSUMER_ACTIONS_RRP_TOPIC));
-            while(true){
-                ConsumerRecords<String, String> records = kConsumer.poll(Duration.ofSeconds(10));
-                records.forEach(record->{
-                    String provenienceTopic = record.topic();
-                    int lastAction;
-                    if(provenienceTopic.endsWith("rmc")){
-                        lastAction = lastRmcActionId;
-                    } else if(provenienceTopic.endsWith("rrp")){
-                        lastAction = lastRrpActionId;
-                    } else {
-                        return;
-                    }
-
-                    //filter actions
-                    ConsumerActionsValue cav = (ConsumerActionsValue) TopicObjectsFactory.fromJson(record.value(), ConsumerActionsValue.class);
-                    if(Integer.parseInt(cav.getId()) > lastAction && AffinityActionsDict.filter(cav)){
-                        ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = cav.getPayloadJson();
-                        if(consumerActionPayload!= null && consumerActionPayload.subcampaignId != null){
-                            int subcampaignId = Integer.parseInt(consumerActionPayload.subcampaignId);
-                            int systemId = Integer.parseInt(cav.getSystemId());
-                            String skAsString = gson.toJson(new SubcampaignesKey(systemId, subcampaignId));
-                            producerManager.getProducer().send(new ProducerRecord<>(sourceTopic, skAsString, record.value()));
-                            logger.debug("Create {} topic input",sourceTopic);
+            try{
+                KafkaConsumer<String, String> kConsumer = new KafkaConsumer<>(consumerProps);
+                kConsumer.subscribe(Arrays.asList(Names.CONSUMER_ACTIONS_RMC_TOPIC, Names.CONSUMER_ACTIONS_RRP_TOPIC));
+                while(true){
+                    ConsumerRecords<String, String> records = kConsumer.poll(Duration.ofSeconds(10));
+                    records.forEach(record->{
+                        String provenienceTopic = record.topic();
+                        int lastAction;
+                        if(provenienceTopic.endsWith("rmc")){
+                            lastAction = lastRmcActionId;
+                        } else if(provenienceTopic.endsWith("rrp")){
+                            lastAction = lastRrpActionId;
+                        } else {
+                            return;
                         }
-                    }
-                });
+
+                        //filter actions
+                        ConsumerActionsValue cav;
+                        try{
+                            cav = (ConsumerActionsValue) TopicObjectsFactory.fromJson(record.value(), ConsumerActionsValue.class);
+                        }catch (Exception exp){
+                            logger.error("Last corrupt record key={}, value={}",record.key(), record.value());
+                            throw exp;
+                        }
+                        if(Integer.parseInt(cav.getId()) > lastAction && AffinityActionsDict.filter(cav)){
+                            ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = cav.getPayloadJson();
+                            if(consumerActionPayload!= null && consumerActionPayload.subcampaignId != null){
+                                int subcampaignId = Integer.parseInt(consumerActionPayload.subcampaignId);
+                                int systemId = Integer.parseInt(cav.getSystemId());
+                                String skAsString = gson.toJson(new SubcampaignesKey(systemId, subcampaignId));
+                                producerManager.getProducer().send(new ProducerRecord<>(sourceTopic, skAsString, record.value()));
+                                logger.debug("Create {} topic input",sourceTopic);
+                            }
+                        }
+                    });
+                }
+            }catch(Exception e){
+                logger.error(e.getMessage(), e);
+                logger.error("Stopping source thread creator Affinity...");
             }
         });
+        poolActionsThread.setDaemon(true);
         poolActionsThread.start();
     }
 
-    public static void scheduleBatchUpdate(String intermediateTopic){
+    public static ScheduledExecutorService scheduleBatchUpdate(String intermediateTopic){
         final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         final Runnable task = ()->{
             try {
@@ -173,19 +183,19 @@ public class App {
         logger.info("Task will start in: "+delay.toMillis()+" millis");
 
         Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
+        return scheduler;
     }
 
     public static void main(String[] args){
-
+        ConfigurableApplicationContext restApp = null;
+        ExecutorService scheduler = null;
+        final String sourceTopic = "affinity-actions";
+        final String subcampaignesTopic = "subcampaignes";
+        final String intermediateTopic = "intermediate-affinity-scores";
         try{
-            SpringApplication.run(App.class, args);
-            final String sourceTopic = "affinity-actions";
-            final String subcampaignesTopic = "subcampaignes";
-            final String intermediateTopic = "intermediate-affinity-scores";
-
+            restApp = SpringApplication.run(App.class, args);
             initSourceTopic(Arrays.asList(sourceTopic, intermediateTopic));
-            scheduleBatchUpdate(intermediateTopic);
-
+            scheduler = scheduleBatchUpdate(intermediateTopic);
 
             final Gson gson = new Gson();
             final StreamsBuilder builder = new StreamsBuilder();
@@ -275,6 +285,8 @@ public class App {
             streams.start();
             Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
         }catch(Exception e){
+            if(restApp != null){restApp.close();}
+            if(scheduler != null){scheduler.shutdown();}
             logger.error(e.getMessage(), e);
             logger.error("EXITING");
             System.exit(1);

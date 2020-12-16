@@ -45,16 +45,6 @@ select system_id, consumer_id, brand_id, sum(score) as score from (
 where brand_id > 0
 group by system_id, consumer_id, brand_id;
 
-update consumers set payload = payload-'affinity_117'-'affinity_125'-'affinity_127'-'affinity_138';
-
---insert into consumers (system_id, consumer_id, payload, updated_at)
---select system_id, consumer_id,
---json_object_agg('affinity_'||brand_id,
---    json_build_object('lut', round(extract(epoch from now()) * 1000)::text, 'value', score::text)
---) as payload, now()
---from consumers_score_start
---group by system_id, consumer_id
---on conflict on constraint consumers_pk do update
---set payload = consumers.payload || excluded.payload, updated_at = now();
+update consumers set payload = payload-'affinity_117'-'affinity_125'-'affinity_127'-'affinity_138',  updated_at = now();
 
 commit;
