@@ -56,6 +56,7 @@ public class App {
         producerProps.put("value.serializer", StringSerializer.class.getName());
         producerManager = ProducerManager.getInstance(producerProps);
 
+        consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "consumer-affinity");
         consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
