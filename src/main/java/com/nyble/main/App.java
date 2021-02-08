@@ -1,31 +1,22 @@
 package com.nyble.main;
 
 import com.google.gson.Gson;
+import com.nyble.consumerProcessors.ActionProcessor;
 import com.nyble.exceptions.RuntimeSqlException;
+import com.nyble.facades.kafkaConsumer.KafkaConsumerFacade;
 import com.nyble.managers.ProducerManager;
 import com.nyble.streams.types.BrandAffinityValue;
-import com.nyble.streams.types.SubcampaignesKey;
-import com.nyble.streams.types.SubcampaignesValue;
 import com.nyble.streams.types.SystemConsumerBrand;
 import com.nyble.topics.Names;
-import com.nyble.topics.TopicObjectsFactory;
-import com.nyble.topics.consumerActions.ConsumerActionsKey;
 import com.nyble.topics.consumerActions.ConsumerActionsValue;
 import com.nyble.topics.consumerAttributes.ConsumerAttributesKey;
 import com.nyble.topics.consumerAttributes.ConsumerAttributesValue;
+import com.nyble.types.Subcampaign;
 import com.nyble.util.DBUtil;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
-import org.apache.kafka.streams.*;
-import org.apache.kafka.streams.kstream.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
@@ -38,25 +29,22 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.Date;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @SpringBootApplication(scanBasePackages = {"com.nyble.rest"})
 public class App {
 
-    final static String KAFKA_CLUSTER_BOOTSTRAP_SERVERS = "10.100.1.17:9093";
-    final static Logger logger = LoggerFactory.getLogger(App.class);
-    final static String appName = "affinity-stream";
-    final static Properties streamsConfig = new Properties();
+    public final static String KAFKA_CLUSTER_BOOTSTRAP_SERVERS = "10.100.1.17:9093";
+    public final static Logger logger = LoggerFactory.getLogger(App.class);
+    public static ProducerManager producerManager;
     final static Properties producerProps = new Properties();
-    static ProducerManager producerManager;
+    final static Properties consumerProps = new Properties();
+    public static int lastRmcActionId;
+    public static int lastRrpActionId;
+
+
     static{
-        streamsConfig.put(StreamsConfig.APPLICATION_ID_CONFIG, appName);
-        streamsConfig.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
-        streamsConfig.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 4);
-        streamsConfig.put(StreamsConfig.REPLICATION_FACTOR_CONFIG, 2);
-        streamsConfig.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, "exactly_once");
 
         producerProps.put("bootstrap.servers", KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
         producerProps.put("acks", "all");
@@ -67,16 +55,20 @@ public class App {
         producerProps.put("key.serializer", StringSerializer.class.getName());
         producerProps.put("value.serializer", StringSerializer.class.getName());
         producerManager = ProducerManager.getInstance(producerProps);
+
+        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        consumerProps.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, 1000*60);
+
         Runtime.getRuntime().addShutdownHook(new Thread(()->{
             producerManager.getProducer().flush();
             producerManager.getProducer().close();
         }));
     }
 
-    public static void initSourceTopic(List<String> topics) throws ExecutionException, InterruptedException {
-        //this values should be updated on redeployment, if actions are reloaded
-        int lastRmcActionId;
-        int lastRrpActionId;
+    public static void initLastActionIds(){
         final String configName = "AFFINITY_LAST_ACTION_ID_%";
         final String lastActIdsQ = String.format("select vals[1]::int as rmc, vals[2]::int as rrp from\n" +
                 "(\tselect array_agg(value order by key) as vals \n" +
@@ -95,84 +87,66 @@ public class App {
         } catch (SQLException e) {
             throw new RuntimeSqlException(e.getMessage(), e);
         }
-        //
-        final String consumerGroupId = "affinity-source-creator";
-        final Gson gson = new Gson();
-
-        Properties consumerProps = new Properties();
-        consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, consumerGroupId);
-        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
-        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        consumerProps.put(ConsumerConfig.AUTO_COMMIT_INTERVAL_MS_CONFIG, 1000*60);
-
-        Properties adminProps = new Properties();
-        adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
-        AdminClient adminClient = AdminClient.create(adminProps);
-        Set<String> existingTopics = adminClient.listTopics().names().get();
-        for(String checkTopic : topics){
-            if(!existingTopics.contains(checkTopic)){
-                int numPartitions = 4;
-                short replFact = 2;
-                NewTopic st = new NewTopic(checkTopic, numPartitions, replFact).configs(new HashMap<>());
-                adminClient.createTopics(Collections.singleton(st));
-            }
-        }
-
-        String sourceTopic = topics.get(0);
-        Thread poolActionsThread = new Thread(()->{
-            try{
-                KafkaConsumer<String, String> kConsumer = new KafkaConsumer<>(consumerProps);
-                kConsumer.subscribe(Arrays.asList(Names.CONSUMER_ACTIONS_RMC_TOPIC, Names.CONSUMER_ACTIONS_RRP_TOPIC));
-                while(true){
-                    ConsumerRecords<String, String> records = kConsumer.poll(Duration.ofSeconds(10));
-                    records.forEach(record->{
-                        String provenienceTopic = record.topic();
-                        int lastAction;
-                        if(provenienceTopic.endsWith("rmc")){
-                            lastAction = lastRmcActionId;
-                        } else if(provenienceTopic.endsWith("rrp")){
-                            lastAction = lastRrpActionId;
-                        } else {
-                            return;
-                        }
-
-                        //filter actions
-                        ConsumerActionsValue cav;
-                        try{
-                            cav = (ConsumerActionsValue) TopicObjectsFactory.fromJson(record.value(), ConsumerActionsValue.class);
-                        }catch (Exception exp){
-                            logger.error("Last corrupt record key={}, value={}",record.key(), record.value());
-                            throw exp;
-                        }
-                        if(Integer.parseInt(cav.getId()) > lastAction && AffinityActionsDict.filter(cav)){
-                            ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = cav.getPayloadJson();
-                            if(consumerActionPayload!= null && consumerActionPayload.subcampaignId != null){
-                                int subcampaignId = Integer.parseInt(consumerActionPayload.subcampaignId);
-                                int systemId = Integer.parseInt(cav.getSystemId());
-                                String skAsString = gson.toJson(new SubcampaignesKey(systemId, subcampaignId));
-                                producerManager.getProducer().send(new ProducerRecord<>(sourceTopic, skAsString, record.value()));
-                                logger.debug("Create {} topic input",sourceTopic);
-                            }
-                        }
-                    });
-                }
-            }catch(Exception e){
-                logger.error(e.getMessage(), e);
-                logger.error("Stopping source thread creator Affinity...");
-            }
-        });
-        poolActionsThread.setDaemon(true);
-        poolActionsThread.start();
     }
 
-    public static ScheduledExecutorService scheduleBatchUpdate(String intermediateTopic){
+    public static List<KafkaConsumerFacade<String, String>> initKafkaConsumers(){
+        KafkaConsumerFacade<String, String> consumerActionsFacade = new KafkaConsumerFacade<>(consumerProps,
+                2, KafkaConsumerFacade.PROCESSING_TYPE_BATCH);
+        consumerActionsFacade.subscribe(Arrays.asList(Names.CONSUMER_ACTIONS_RMC_TOPIC, Names.CONSUMER_ACTIONS_RRP_TOPIC));
+        consumerActionsFacade.startPolling(Duration.ofSeconds(10), ActionProcessor.class);
+
+        return Collections.singletonList(consumerActionsFacade);
+    }
+
+
+
+    public static void main(String[] args){
+
+        try{
+            ConfigurableApplicationContext restApp = SpringApplication.run(App.class, args);
+            ExecutorService scheduler = scheduleBatchUpdate();
+
+            initLastActionIds();
+            List<KafkaConsumerFacade<String, String>> consumerFacades = initKafkaConsumers();
+
+            Runtime.getRuntime().addShutdownHook(new Thread(()->{
+                if(restApp != null){
+                    logger.warn("Closing rest server");
+                    restApp.close();
+                    logger.warn("Rest server closed");
+                }
+                if(scheduler != null){
+                    logger.warn("Closing decrement scheduler");
+                    scheduler.shutdown();
+                    try {
+                        scheduler.awaitTermination(100, TimeUnit.SECONDS);
+                        logger.warn("Decrement scheduler closed");
+                    } catch (InterruptedException e) {
+                        logger.error("Force killed scheduler", e);
+                    }
+                }
+                for(KafkaConsumerFacade<String, String> consumerFacade : consumerFacades){
+                    try {
+                        logger.warn("Closing kafka consumer facade");
+                        consumerFacade.stopPolling();
+                        logger.warn("Kafka consumer facade closed");
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }));
+        }catch(Exception e){
+            logger.error(e.getMessage(), e);
+            logger.error("EXITING");
+        }
+    }
+
+    public static ScheduledExecutorService scheduleBatchUpdate(){
         final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         final Runnable task = ()->{
             try {
                 logger.info("Start update ");
-                updateScoresEveryHour(intermediateTopic);
+                updateScoresEveryHour();
                 logger.info("End update");
             } catch (Exception e) {
                 logger.error(e.getMessage(), e);
@@ -182,119 +156,11 @@ public class App {
         scheduler.scheduleAtFixedRate(task, delay.toMillis(), Duration.ofHours(1).toMillis(), TimeUnit.MILLISECONDS);
         logger.info("Task will start in: "+delay.toMillis()+" millis");
 
-        Runtime.getRuntime().addShutdownHook(new Thread(scheduler::shutdown));
         return scheduler;
     }
 
-    public static void main(String[] args){
-        ConfigurableApplicationContext restApp = null;
-        ExecutorService scheduler = null;
-        final String sourceTopic = "affinity-actions";
-        final String subcampaignesTopic = "subcampaignes";
-        final String intermediateTopic = "intermediate-affinity-scores";
-        try{
-            restApp = SpringApplication.run(App.class, args);
-            initSourceTopic(Arrays.asList(sourceTopic, intermediateTopic));
-            scheduler = scheduleBatchUpdate(intermediateTopic);
 
-            final Gson gson = new Gson();
-            final StreamsBuilder builder = new StreamsBuilder();
-            final KStream<String, String> affinityEvents = builder
-                    .stream(sourceTopic,Consumed.with(Serdes.String(), Serdes.String())
-                    );
-            final KTable<String, String> subcampaignesTable = builder.table(subcampaignesTopic,
-                    Consumed.with(Serdes.String(), Serdes.String()));
-
-            final KStream<String, String> actionsEventsEnrichedWithSubcampaignes = affinityEvents
-                    .join(subcampaignesTable,(action, subcampaign)->{
-                        logger.debug("Join action with subcampaign");
-                        ConsumerActionsValue consumerActionsValue = (ConsumerActionsValue) TopicObjectsFactory
-                                .fromJson(action, ConsumerActionsValue.class);
-                        ConsumerActionsValue.ConsumerActionsPayload consumerActionPayload = consumerActionsValue.getPayloadJson();
-                        int actionScore = AffinityActionsDict.getScore(consumerActionsValue.getSystemId()+"",
-                                consumerActionsValue.getActionId()+"", consumerActionPayload);
-                        SubcampaignesValue subcampaignesValue = gson.fromJson(subcampaign, SubcampaignesValue.class);
-                        int brandId = subcampaignesValue.getBrandId();
-                        //allowed brands are //117 = CAMEL   125 = SOBRANIE   127 = WINSTON   138 = LOGIC   486 = Multiref.brand
-                        if(brandId == 13 && consumerActionsValue.getSystemId().equals("1")){
-                            brandId = 138;
-                        }else if(brandId == 486){
-                            if(consumerActionPayload.getValue() == null){
-                                brandId = -1;
-                            }else{
-                                String skuBought = consumerActionPayload.getValue().sku_bought!= null ?
-                                        consumerActionPayload.getValue().sku_bought : "";
-                                if(skuBought.toUpperCase().startsWith("SB") || skuBought.toUpperCase().startsWith("SO")){brandId = 125;}
-                                else if(skuBought.toUpperCase().startsWith("WI")){brandId = 127;}
-                                else if(skuBought.toUpperCase().startsWith("CA")){brandId = 117;}
-                                else if(skuBought.toUpperCase().startsWith("LG")){brandId = 138;}
-                                else {brandId = -1;}
-                            }
-                        }
-                        BrandAffinityValue bav = new BrandAffinityValue(Integer.parseInt(consumerActionsValue.getSystemId()),
-                                Integer.parseInt(consumerActionsValue.getConsumerId()), brandId, actionScore);
-                        return gson.toJson(bav);
-                    },Joined.with(Serdes.String(), Serdes.String(), Serdes.String()))
-                    .map((subcampaignStr, bavStr)->{
-                        logger.debug("Remap key from subcampaign to consumer");
-                        SubcampaignesKey sk = gson.fromJson(subcampaignStr, SubcampaignesKey.class);
-                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                        ConsumerActionsKey cak = new ConsumerActionsKey(sk.getSystemId(), bav.getConsumerId());
-                        return KeyValue.pair(cak.toJson(), bavStr);
-                    })
-                    .filter((consumerStr, bavStr) -> {
-                        logger.debug("Filter out actions with score == 0 and brand not allowed");
-                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                        return bav != null && (bav.getDeltaScore() != 0)
-                                && AffinityActionsDict.allowedBrands.contains(bav.getBrandId());
-                    });
-
-            actionsEventsEnrichedWithSubcampaignes
-                    .map((consumerActionsKeyStr, bavStr) ->{
-                        logger.debug("Remap key including brand from subcampaign");
-                        ConsumerActionsKey cak = (ConsumerActionsKey) TopicObjectsFactory
-                                .fromJson(consumerActionsKeyStr, ConsumerActionsKey.class);
-                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                        return KeyValue.pair(
-                                gson.toJson(new SystemConsumerBrand(cak.getSystemId(),cak.getConsumerId(),bav.getBrandId())),bavStr
-                        );
-                    })
-                    .through(intermediateTopic, Produced.with(Serdes.String(), Serdes.String()))
-                    .groupByKey()
-                    .reduce((bavStr1, bavStr2)->{
-                        BrandAffinityValue bav1 = gson.fromJson(bavStr1, BrandAffinityValue.class);
-                        BrandAffinityValue bav2 = gson.fromJson(bavStr2, BrandAffinityValue.class);
-                        bav2.add(bav1.getDeltaScore());
-                        return gson.toJson(bav2);
-                    })
-                    .toStream()
-                    .map((scbStr, bavStr)->{
-                        String currentTime = new Date().getTime()+"";
-                        BrandAffinityValue bav = gson.fromJson(bavStr, BrandAffinityValue.class);
-                        ConsumerAttributesKey cak = new ConsumerAttributesKey(bav.getSystemId(), bav.getConsumerId());
-                        ConsumerAttributesValue cav = new ConsumerAttributesValue(bav.getSystemId()+"", bav.getConsumerId()+"",
-                                "affinity_"+bav.getBrandId(), bav.getDeltaScore()+"", currentTime, currentTime);
-                        return KeyValue.pair(cak.toJson(), cav.toJson());
-                    })
-                    .to(Names.CONSUMER_ATTRIBUTES_TOPIC, Produced.with(Serdes.String(), Serdes.String()));
-
-            Topology topology = builder.build();
-            logger.debug(topology.describe().toString());
-            KafkaStreams streams = new KafkaStreams(topology, streamsConfig);
-            streams.cleanUp();
-            streams.start();
-            Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
-        }catch(Exception e){
-            if(restApp != null){restApp.close();}
-            if(scheduler != null){scheduler.shutdown();}
-            logger.error(e.getMessage(), e);
-            logger.error("EXITING");
-            System.exit(1);
-        }
-    }
-
-
-    private static void updateScoresEveryHour(String intermediateTopic) throws Exception {
+    private static void updateScoresEveryHour() throws Exception {
         Gson gson = new Gson();
         Map<SystemConsumerBrand, BrandAffinityValue> decrements = new HashMap<>();
         final String startDate = getLastDate();
@@ -304,6 +170,7 @@ public class App {
         now.set(Calendar.SECOND, 0);
         now.set(Calendar.MINUTE, 0);
         final String endDate = new SimpleDateFormat("yyyy-MM-dd HH:mm").format(now.getTime());
+        final String currentTime = System.currentTimeMillis()+"";
 
         logger.info("Remove score from {} to {}", startDate, endDate);
         final String query = "select ca.system_id, ca.consumer_id, r.brand_id , ca.action_id, ca.payload_json->>'value' as value, \n" +
@@ -366,11 +233,17 @@ public class App {
         }
 
         for(Map.Entry<SystemConsumerBrand, BrandAffinityValue> e : decrements.entrySet()){
-            e.getValue().setDeltaScore(e.getValue().getDeltaScore() * -1);
-            String keyStr = gson.toJson(e.getKey());
-            String valStr = gson.toJson(e.getValue());
-            logger.debug("Sending {} and {} to {}", keyStr, valStr, intermediateTopic);
-            producerManager.getProducer().send(new ProducerRecord<>(intermediateTopic, keyStr, valStr));
+            SystemConsumerBrand k = e.getKey();
+            BrandAffinityValue v = e.getValue();
+            String brandScoreLabel = "affinity_"+v.getBrandId();
+            String incrementScore = "-"+v.getDeltaScore();
+            ConsumerAttributesKey cak = new ConsumerAttributesKey(k.getSystemId(), k.getConsumerId());
+            ConsumerAttributesValue cav = new ConsumerAttributesValue(k.getSystemId()+"", k.getConsumerId()+"",
+                    brandScoreLabel, incrementScore, currentTime, currentTime);
+            String keyStr = cak.toJson();
+            String valStr = cav.toJson();
+            logger.debug("Sending {} and {} to {}", keyStr, valStr, Names.CONSUMER_ATTRIBUTES_TOPIC);
+            producerManager.getProducer().send(new ProducerRecord<>(Names.CONSUMER_ATTRIBUTES_TOPIC, keyStr, valStr));
         }
         updateLastDate(endDate);
     }
@@ -401,4 +274,45 @@ public class App {
         }
     }
 
+    public static Subcampaign getSubcampaign(int systemId, int subcampaignId) throws SQLException {
+        final String queryLocal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
+                "from ref.subcampaignes " +
+                "where system_id = %d and id = %d", systemId, subcampaignId);
+        final String queryExternal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
+                "from ref.load_external_subcampaign " +
+                "where system_id = %d and id = %d", systemId, subcampaignId);
+        final String queryInsertExternal = "INSERT INTO ref.subcampaignes (system_id, id, campaign_id, brand_id, date_create) " +
+                "values (?,?,?,?,?) " +
+                "on conflict on constraint unique_external_subcampaign do nothing";
+        try(Connection conn = DBUtil.getInstance().getConnection("datawarehouse");
+            Statement st = conn.createStatement();
+            ResultSet rs = st.executeQuery(queryLocal)){
+            if(rs.next()){
+                int brandId = rs.getInt("brand_id");
+                return new Subcampaign(systemId, subcampaignId, brandId);
+            }else{
+                try(Statement externalSt = conn.createStatement();
+                    PreparedStatement insertExternal = conn.prepareStatement(queryInsertExternal);
+                    ResultSet externalRs = externalSt.executeQuery(queryExternal)){
+
+                    if(externalRs.next()){
+                        int campaignId = externalRs.getInt("campaign_id");
+                        int brandId = externalRs.getInt("brand_id");
+                        Timestamp dateCreate = externalRs.getTimestamp("date_create");
+
+                        insertExternal.setInt(1, systemId);
+                        insertExternal.setInt(2, subcampaignId);
+                        insertExternal.setInt(3, campaignId);
+                        insertExternal.setInt(4, brandId);
+                        insertExternal.setTimestamp(5, dateCreate);
+                        insertExternal.executeUpdate();
+
+                        return new Subcampaign(systemId, subcampaignId, brandId);
+                    }else{
+                        return null;
+                    }
+                }
+            }
+        }
+    }
 }

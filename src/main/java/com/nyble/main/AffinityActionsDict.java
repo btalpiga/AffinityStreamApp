@@ -302,27 +302,28 @@ public class AffinityActionsDict {
 
     public static int getSkuScore(String productWebSku) {
         //only logic products will use this method
-        if(productScoreMap != null){
-            return productScoreMap.get(productWebSku);
-        }
-
-        synchronized (AffinityActionsDict.class){
-            productScoreMap = new HashMap<>();
-        }
-        String query = "select sku_web, score from affinity.logic_command_content_scoring";
-        try(Connection conn  = DBUtil.getInstance().getConnection("datawarehouse");
-            Statement st = conn.createStatement();
-            ResultSet rs = st.executeQuery(query)){
-            while(rs.next()){
-                String webSku = rs.getString(1);
-                int score = rs.getInt(2);
-                productScoreMap.put(webSku, score);
+        if(productScoreMap == null){
+            synchronized (AffinityActionsDict.class){
+                if(productScoreMap == null){
+                    productScoreMap = new HashMap<>();
+                    String query = "select sku_web, score from affinity.logic_command_content_scoring";
+                    try(Connection conn  = DBUtil.getInstance().getConnection("datawarehouse");
+                        Statement st = conn.createStatement();
+                        ResultSet rs = st.executeQuery(query)){
+                        while(rs.next()){
+                            String webSku = rs.getString(1);
+                            int score = rs.getInt(2);
+                            productScoreMap.put(webSku, score);
+                        }
+                    } catch (SQLException e) {
+                        logger.error(e.getMessage(), e);
+                        return 0;
+                    }
+                }
             }
-        } catch (SQLException e) {
-            logger.error(e.getMessage(), e);
-            return 0;
         }
-        return productScoreMap.get(productWebSku);
+        Integer score = productScoreMap.get(productWebSku);
+        return score != null ? score : 0;
     }
 
     public static String extractTagValue(String jsonStr, String tag) {
