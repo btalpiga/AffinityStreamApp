@@ -38,7 +38,7 @@ public class ActionProcessor implements RecordProcessor<String, String> {
         Map<SystemConsumerBrand, BrandAffinityValue> increments = new HashMap<>();
         final String now = System.currentTimeMillis()+"";
         consumerRecords.forEach(action->{
-           int externalSystemProvenience = action.topic().contains("rmc") ? Names.RMC_SYSTEM_ID : Names.RRP_SYSTEM_ID;
+            int externalSystemProvenience = action.topic().contains("rmc") ? Names.RMC_SYSTEM_ID : Names.RRP_SYSTEM_ID;
             ConsumerActionsValue actionValue = (ConsumerActionsValue) TopicObjectsFactory.fromJson(action.value(), ConsumerActionsValue.class);
             Pair<SystemConsumerBrand, BrandAffinityValue> actionScore;
             try {

@@ -145,7 +145,14 @@ public class AffinityActionsDict {
                         if(command == null){
                             return 0;
                         }
-                        List<Map<String, Object>> products = (List<Map<String, Object>>) ((Map)(command.get("Products"))).get("Product");
+                        List<Map<String, Object>> products = null;
+                        Map<String, Object> singleProduct = null;
+                        try{
+                            products = (List<Map<String, Object>>) ((Map)(command.get("Products"))).get("Product");
+                        }catch(Exception exp){
+                            singleProduct = (Map<String, Object>) ((Map)(command.get("Products"))).get("Product");
+                            products = Collections.singletonList(singleProduct);
+                        }
                         for(Map<String, Object> product : products){
                             String productWebSku = product.get("ProductSKU")+"";
                             int productScore = AffinityActionsDict.getSkuScore(productWebSku);
