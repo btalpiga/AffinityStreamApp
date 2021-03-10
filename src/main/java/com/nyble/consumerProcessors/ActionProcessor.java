@@ -134,16 +134,18 @@ public class ActionProcessor implements RecordProcessor<String, String> {
 
     public String getPrizeName(ConsumerActionsValue cav){
         String rez = "";
-        JsonElement json = localGson.fromJson(cav.getPayloadJson().getRaw(), JsonElement.class);
         try{
-            if(!json.isJsonNull() && json.isJsonObject()){
-                rez = json.getAsJsonObject().get("value").getAsJsonObject().get("prize_name").getAsString().toUpperCase();
-                if(rez.contains("SOBRANIE")){
-                    rez = "SB";
-                }else if(rez.contains("CAMEL")){
-                    rez = "CA";
-                }else if(rez.contains("WINSTON")){
-                    rez = "WI";
+            if(cav.getActionId().equals("1898")){
+                JsonElement json = localGson.fromJson(cav.getPayloadJson().getRaw(), JsonElement.class);
+                if(!json.isJsonNull() && json.isJsonObject()){
+                    rez = json.getAsJsonObject().get("value").getAsJsonObject().get("prize_name").getAsString().toUpperCase();
+                    if(rez.contains("SOBRANIE")){
+                        rez = "SB";
+                    }else if(rez.contains("CAMEL")){
+                        rez = "CA";
+                    }else if(rez.contains("WINSTON")){
+                        rez = "WI";
+                    }
                 }
             }
         }catch(Exception e){
