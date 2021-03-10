@@ -44,7 +44,7 @@ public class App {
     public static int lastRrpActionId;
 
 
-    static{
+    public static void initProps(){
 
         producerProps.put("bootstrap.servers", KAFKA_CLUSTER_BOOTSTRAP_SERVERS);
         producerProps.put("acks", "all");
@@ -104,9 +104,9 @@ public class App {
     public static void main(String[] args){
 
         try{
+            initProps();
             ConfigurableApplicationContext restApp = SpringApplication.run(App.class, args);
             ExecutorService scheduler = scheduleBatchUpdate();
-
             initLastActionIds();
             List<KafkaConsumerFacade<String, String>> consumerFacades = initKafkaConsumers();
 
@@ -272,48 +272,6 @@ public class App {
             logger.info("Updating last date");
             st.executeUpdate(query);
             logger.info("Updated last date");
-        }
-    }
-
-    public static Subcampaign getSubcampaign(int systemId, int subcampaignId) throws SQLException {
-        final String queryLocal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
-                "from ref.subcampaignes " +
-                "where system_id = %d and id = %d", systemId, subcampaignId);
-        final String queryExternal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
-                "from ref.load_external_subcampaign " +
-                "where system_id = %d and id = %d", systemId, subcampaignId);
-        final String queryInsertExternal = "INSERT INTO ref.subcampaignes (system_id, id, campaign_id, brand_id, date_create) " +
-                "values (?,?,?,?,?) " +
-                "on conflict on constraint unique_external_subcampaign do nothing";
-        try(Connection conn = DBUtil.getInstance().getConnection("datawarehouse");
-            Statement st = conn.createStatement();
-            ResultSet rs = st.executeQuery(queryLocal)){
-            if(rs.next()){
-                int brandId = rs.getInt("brand_id");
-                return new Subcampaign(systemId, subcampaignId, brandId);
-            }else{
-                try(Statement externalSt = conn.createStatement();
-                    PreparedStatement insertExternal = conn.prepareStatement(queryInsertExternal);
-                    ResultSet externalRs = externalSt.executeQuery(queryExternal)){
-
-                    if(externalRs.next()){
-                        int campaignId = externalRs.getInt("campaign_id");
-                        int brandId = externalRs.getInt("brand_id");
-                        Timestamp dateCreate = externalRs.getTimestamp("date_create");
-
-                        insertExternal.setInt(1, systemId);
-                        insertExternal.setInt(2, subcampaignId);
-                        insertExternal.setInt(3, campaignId);
-                        insertExternal.setInt(4, brandId);
-                        insertExternal.setTimestamp(5, dateCreate);
-                        insertExternal.executeUpdate();
-
-                        return new Subcampaign(systemId, subcampaignId, brandId);
-                    }else{
-                        return null;
-                    }
-                }
-            }
         }
     }
 }

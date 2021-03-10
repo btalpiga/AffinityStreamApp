@@ -1,6 +1,7 @@
 package com.nyble.consumerProcessors;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.nyble.facades.kafkaConsumer.RecordProcessor;
 import com.nyble.main.AffinityActionsDict;
 import com.nyble.main.App;
@@ -12,6 +13,7 @@ import com.nyble.topics.consumerActions.ConsumerActionsValue;
 import com.nyble.topics.consumerAttributes.ConsumerAttributesKey;
 import com.nyble.topics.consumerAttributes.ConsumerAttributesValue;
 import com.nyble.types.Subcampaign;
+import com.nyble.util.DBUtil;
 import com.nyble.util.Pair;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -19,7 +21,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,6 +29,7 @@ import java.util.Map;
 public class ActionProcessor implements RecordProcessor<String, String> {
 
     private final static Logger logger = LoggerFactory.getLogger(ActionProcessor.class);
+    private final Gson localGson = new Gson();
 
     @Override
     public boolean process(ConsumerRecord<String, String> consumerRecord) {
@@ -85,7 +88,7 @@ public class ActionProcessor implements RecordProcessor<String, String> {
             return null;
         }
         int subcampaignId = Integer.parseInt(subcampaignStr);
-        Subcampaign subcampaign = App.getSubcampaign(systemId, subcampaignId);
+        Subcampaign subcampaign = getSubcampaign(systemId, subcampaignId);
         if(subcampaign == null){
             return null;
         }
@@ -96,12 +99,14 @@ public class ActionProcessor implements RecordProcessor<String, String> {
             if(cav.getPayloadJson().getValue() == null){
                 return null;
             }else{
-                String skuBought = cav.getPayloadJson().getValue().sku_bought!= null ?
-                        cav.getPayloadJson().getValue().sku_bought : "";
-                if(skuBought.toUpperCase().startsWith("SB") || skuBought.toUpperCase().startsWith("SO")){brandId = 125;}
-                else if(skuBought.toUpperCase().startsWith("WI")){brandId = 127;}
-                else if(skuBought.toUpperCase().startsWith("CA")){brandId = 117;}
-                else if(skuBought.toUpperCase().startsWith("LG")){brandId = 138;}
+                String brandPrefix = getSkuBought(cav);
+                if(brandPrefix.isEmpty()){
+                    brandPrefix = getPrizeName(cav);
+                }
+                if(brandPrefix.startsWith("SB") || brandPrefix.startsWith("SO")){brandId = 125;}
+                else if(brandPrefix.startsWith("WI")){brandId = 127;}
+                else if(brandPrefix.startsWith("CA")){brandId = 117;}
+                else if(brandPrefix.startsWith("LG")){brandId = 138;}
                 else {return null;}
             }
         }else if(!AffinityActionsDict.allowedBrands.contains(brandId)){
@@ -117,6 +122,75 @@ public class ActionProcessor implements RecordProcessor<String, String> {
             return new Pair<>(scb, bav);
         }else{
             return null;
+        }
+    }
+
+
+    public String getSkuBought(ConsumerActionsValue cav){
+        String rez = cav.getPayloadJson().getValue().sku_bought!= null ?
+                cav.getPayloadJson().getValue().sku_bought.toUpperCase() : "";
+        return !rez.isEmpty() && rez.length()>=2 ? rez.substring(0, 2) : "";
+    }
+
+    public String getPrizeName(ConsumerActionsValue cav){
+        String rez = "";
+        JsonElement json = localGson.fromJson(cav.getPayloadJson().getRaw(), JsonElement.class);
+        try{
+            if(!json.isJsonNull() && json.isJsonObject()){
+                rez = json.getAsJsonObject().get("value").getAsJsonObject().get("prize_name").getAsString().toUpperCase();
+                if(rez.contains("SOBRANIE")){
+                    rez = "SB";
+                }else if(rez.contains("CAMEL")){
+                    rez = "CA";
+                }else if(rez.contains("WINSTON")){
+                    rez = "WI";
+                }
+            }
+        }catch(Exception e){
+            logger.error(e.getMessage(), e);
+        }
+        return rez;
+    }
+
+    public Subcampaign getSubcampaign(int systemId, int subcampaignId) throws SQLException {
+        final String queryLocal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
+                "from ref.subcampaignes " +
+                "where system_id = %d and id = %d", systemId, subcampaignId);
+        final String queryExternal = String.format("select system_id, id, campaign_id, brand_id, date_create " +
+                "from ref.load_external_subcampaign " +
+                "where system_id = %d and id = %d", systemId, subcampaignId);
+        final String queryInsertExternal = "INSERT INTO ref.subcampaignes (system_id, id, campaign_id, brand_id, date_create) " +
+                "values (?,?,?,?,?) " +
+                "on conflict on constraint unique_external_subcampaign do nothing";
+        try(Connection conn = DBUtil.getInstance().getConnection("datawarehouse");
+            Statement st = conn.createStatement();
+            ResultSet rs = st.executeQuery(queryLocal)){
+            if(rs.next()){
+                int brandId = rs.getInt("brand_id");
+                return new Subcampaign(systemId, subcampaignId, brandId);
+            }else{
+                try(Statement externalSt = conn.createStatement();
+                    PreparedStatement insertExternal = conn.prepareStatement(queryInsertExternal);
+                    ResultSet externalRs = externalSt.executeQuery(queryExternal)){
+
+                    if(externalRs.next()){
+                        int campaignId = externalRs.getInt("campaign_id");
+                        int brandId = externalRs.getInt("brand_id");
+                        Timestamp dateCreate = externalRs.getTimestamp("date_create");
+
+                        insertExternal.setInt(1, systemId);
+                        insertExternal.setInt(2, subcampaignId);
+                        insertExternal.setInt(3, campaignId);
+                        insertExternal.setInt(4, brandId);
+                        insertExternal.setTimestamp(5, dateCreate);
+                        insertExternal.executeUpdate();
+
+                        return new Subcampaign(systemId, subcampaignId, brandId);
+                    }else{
+                        return null;
+                    }
+                }
+            }
         }
     }
 }
